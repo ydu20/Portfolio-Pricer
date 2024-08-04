@@ -116,6 +116,17 @@ def clear_warning():
   state.warning = ''
 
 def update_portfolio():
+  new_portfolio_value = state.cash_value
+  for index, row in state.portfolio.iterrows():
+    if row['Position'] == 'Stock':
+      state.portfolio.at[index, 'Market Value'] = state.spot * row['Quantity']
+      new_portfolio_value += state.spot * row['Quantity']
+    else:
+      # TODO: update option value
+
+      new_portfolio_value += 0
+
+  state.portfolio_value = new_portfolio_value
   return
 
 def update_cost():
