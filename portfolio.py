@@ -110,7 +110,7 @@ def add_position():
     state.portfolio.loc[len(state.portfolio)] = new_pos
 
   # Update cash position
-  state.cash_value -= state.cost
+  state.cash_value = round(state.cash_value - state.cost, 2)
 
 def clear_warning():
   state.warning = ''
@@ -118,15 +118,17 @@ def clear_warning():
 def update_portfolio():
   new_portfolio_value = state.cash_value
   for index, row in state.portfolio.iterrows():
+    new_pos_val = 0
     if row['Position'] == 'Stock':
-      state.portfolio.at[index, 'Market Value'] = state.spot * row['Quantity']
-      new_portfolio_value += state.spot * row['Quantity']
+      new_pos_val = state.spot * row['Quantity']
     else:
-      # TODO: update option value
+      new_pos_val = price_option(int(row['Position'].split(' ')[0]), row['Expiration'], \
+          'Call' in row['Position']) * row['Quantity']
+    
+    state.portfolio.at[index, 'Market Value'] = new_pos_val
+    new_portfolio_value += new_pos_val
 
-      new_portfolio_value += 0
-
-  state.portfolio_value = new_portfolio_value
+  state.portfolio_value = round(new_portfolio_value, 2)
   return
 
 def update_cost():
