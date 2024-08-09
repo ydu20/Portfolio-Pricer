@@ -17,6 +17,7 @@ DAY_COUNT = 252
 # Session State abbriviation
 state = st.session_state
 
+################################################## Define Variables ##################################################
 # Define portfolio dataframe
 if 'portfolio' not in state:
   state.portfolio = pd.DataFrame(columns = ['Position', 
@@ -44,8 +45,10 @@ if 'portfolio_value' not in state:
 if 'cash_value' not in state:
   state.cash_value = CASH_INIT
 
+if 'greeks_data' not in state:
+  state.greeks_data = {"X": [0], "Y": [0]}
 
-# Helper functions
+################################################## Helper Functions ##################################################
 def price_option(K, expiration, is_call):
   S = state.spot
   T = expiration / DAY_COUNT
@@ -72,7 +75,7 @@ def add_position():
   
   # Generate new position
   pos_name = ''
-  pos_exp = "" if state.product == 'Stock' else state.expiration
+  pos_exp = None if state.product == 'Stock' else state.expiration
   if state.product == 'Stock':
     pos_name = 'Stock'
   else:
@@ -105,7 +108,7 @@ def add_position():
 
   if not found:
     new_pos = {'Position': pos_name, 'Expiration': pos_exp, 'Quantity': state.quantity, 
-        'Avg. Entry': state.spot, 'Market Price': state.spot, 'Cost': state.cost, 
+        'Avg. Entry': state.spot * 1.0, 'Market Price': state.spot, 'Cost': state.cost, 
         'Market Value': state.cost, 'P/L': 0}
     state.portfolio.loc[len(state.portfolio)] = new_pos
 
@@ -145,7 +148,105 @@ def update_all():
   update_cost()
   update_portfolio()
 
-# Main display
+# Compute greeks graph
+def generate_greeks_graph():
+  if 'port_indep' not in state:
+    return
+  if len(state.portfolio) == 0:
+    state.greeks_data = [[]]
+    # return
+
+  x = None
+  y = []
+
+  if state.port_indep == 'Spot':
+    x = [i for i in range(1, 101, 1)]
+  else:
+    # TODO: support other independent vars
+    x = []
+
+  for curr_x in x:
+    curr_y = 0
+    for _, row in state.portfolio.iterrows():
+      S = state.spot
+      K = int(row['Position'].split(' ')[0]) if row['Position'] != 'Stock' else 0
+      expiration = row['Expiration']
+      is_call = 'Call' in row['Position']
+      vol = state.vol
+      quantity = row['Quantity']
+
+      if state.port_indep == 'Spot':
+        S = curr_x
+       # TODO: support other indep vars
+
+
+      if state.port_greek == 'Delta':
+        if row['Position'] == 'Stock':
+          curr_y += row['Quantity']
+        else:
+          curr_y += calculate_delta(S, K, expiration, is_call, vol) * quantity
+      elif state.port_greek == 'Gamma':
+        if row['Position'] != 'Stock':
+          curr_y += calculate_gamma(S, K, expiration, vol) * quantity
+      elif state.port_greek == 'Vega':
+        if row['Position'] != 'Stock':
+          curr_y += calculate_vega(S, K, expiration, vol) * quantity
+      elif state.port_greek == 'Theta':
+        if row['Position'] != 'Stock':
+          curr_y += calculate_theta(S, K, expiration, is_call, vol) * quantity
+      else:
+        # TODO: support other greeks
+        continue
+    y.append(curr_y)
+
+  state.greeks_data = {"X": x, "Y": y}
+  
+
+
+def calculate_delta(S, K, expiration, is_call, vol):
+  T = expiration / DAY_COUNT
+  R = RF_RATE
+  sigma = vol / 100
+
+  d1 = (np.log(S / K) + (R + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+  if is_call:
+    return norm.cdf(d1)
+  else:
+    return norm.cdf(d1) - 1
+
+def calculate_gamma(S, K, expiration, vol):
+  T = expiration / DAY_COUNT
+  R = RF_RATE
+  sigma = vol / 100
+  
+  d1 = (np.log(S / K) + (R + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+  return np.exp(-(np.power(d1, 2))/2) / (S*sigma*np.sqrt(2 * T * np.pi))
+
+def calculate_vega(S, K, expiration, vol):
+  T = expiration / DAY_COUNT
+  R = RF_RATE
+  sigma = vol / 100
+
+  d1 = (np.log(S / K) + (R + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+  return S * np.exp(-(np.power(d1, 2))/2) * np.sqrt(T / (2 * np.pi))
+
+def calculate_theta(S, K, expiration, is_call, vol):
+  T = expiration / DAY_COUNT
+  R = RF_RATE
+  sigma = vol / 100
+
+  d1 = (np.log(S / K) + (R + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+  d2 = d1 - sigma * np.sqrt(T)
+
+  dN_d1 = np.exp(-(np.power(d1, 2))/2) / np.sqrt(2 * np.pi)
+  
+  if is_call:
+    return S * sigma * dN_d1 / (2 * np.sqrt(T)) - R * K * np.exp(-R * T) * norm.cdf(d2)
+  else:
+    return S * sigma * dN_d1 / (2 * np.sqrt(T)) + R * K * np.exp(-R * T) * (1 - norm.cdf(d2))
+
+
+################################################## Main Display ##################################################
 st.title('Options Portfolio Pricer')
 
 st.slider('Spot', SPOT_MIN, SPOT_MAX, SPOT_INIT, key = 'spot', on_change = update_all)
@@ -162,9 +263,22 @@ st.markdown(f'<div style="text-align: right;">Portfolio value: {"{:,}".format(st
 st.markdown(f'<div style="text-align: right;">Cash value: {"{:,}".format(state.cash_value)}</div>', 
             unsafe_allow_html=True)
 
+# Greeks
+st.subheader('Portfolio Greeks')
+greek_sel_col1, greek_sel_col2 = st.columns(2)
 
+with greek_sel_col1:
+  st.selectbox('Greek', ['Delta', 'Gamma', 'Vega', 'Theta'], key = 'port_greek', 
+               on_change = generate_greeks_graph())
 
-# Sidebar display
+with greek_sel_col2:
+  st.selectbox('As a function of', ['Spot'], key = 'port_indep', 
+               on_change = generate_greeks_graph()) # Spot, vol, time
+  
+# Chart
+st.line_chart(state.greeks_data, x = 'X')
+
+################################################## Sidebar Display ##################################################
 with st.sidebar:
   st.title('New Position')
   product = st.selectbox('Stock / Option', ['Stock', 'Option'], 
